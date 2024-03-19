@@ -34,18 +34,26 @@ class Assignment(Predicate):
     taskValue:ConstantStr
     user:ConstantStr
     duration:int
-    avaliable:DayVals
+    #avaliable:DayVals
     time:int
 # Triggered by a change in a storage bucket
 @functions_framework.cloud_event
 def clormTimetable(cloud_event):
-    def addToDict(name, userID):
+    def addToUserDict(name, userID):
         
         updateDict={
             "userID":userID,
             "name":name
         }
         return updateDict
+    def readTasks():
+        storageClient= storage.Client()
+        bucketVal=storageClient.bucket("asp-react")
+        blob=bucketVal.blob("Task2.0.json")
+        taskData=blob.download_as_bytes().decode()
+        taskDictData=json.loads(taskData)
+        print(taskVals)
+        return taskVals
     currentMembers=0
     #Gain basic info on the file that was just added
     data = cloud_event.data
@@ -73,33 +81,62 @@ def clormTimetable(cloud_event):
     for blob in storageClient.list_blobs(bucket,prefix=userVals['hiveID']):      
         userData=blob.download_as_bytes().decode()
         userDictData=json.loads(userData)
-        
-        userDict=addToDict(userDictData['name'],userDictData['userID'])
+        userDict=addToUserDict(userDictData['name'],userDictData['userID'])
         allMembersDict["userSpecifications"].append(userDict)
-        # allMembersDict.update({'name':userDictData['name'], 'userID':userDictData['userID']})
         print(allMembersDict)
         currentMembers+=1
-    print(allMembersDict)
+    
+    blobTask= bucketVal.blob("Task2.0.json")
+    taskData=blobTask.download_as_bytes().decode()
+    taskValuesJson=json.loads(taskData)
+    # for tasks in taskVals['TaskValues']:
+    #     print(tasks['taskName'])
 
+    # print(allMembersDict)
+
+    # allTasksDict=readTasks()
+    # print(allTasksDict)
     #If member is present call the ASP 
     if maxMembers==currentMembers:
-        
-        # for blobs in storageClient.list_blobs(bucket,prefix=userVals['hiveID']):
-        #     # userVals[counter]={''}
-        #     blobVal=bucketVal.blob(blobs.name)
-        #     print(userDictData)
-        #     userDictVals.update({'name':userDictData['name'], 'userID':userDictData['userID']})
-            
-        
         ctrl=clingo.Control(unifier=[User,Task,Assignment])
         ctrl.load(ASP_PROGRAM)
         users=[User(name=userValues['name'],userID=userValues['userID']) for userValues in allMembersDict['userSpecifications']]
-        # users=[User(name=userValues['name'],userID=userValues['userID'], for userValues in userDetails['userSpecifications']]
-        # tasks=[Task(name=taskValues['taskName'],duration=taskValues['duration'])for taskValues in taskDetails["TaskValues"][0]["TaskDescriptions"]]  
-        #instances=FactBase(users+tasks)       
+        tasks=[Task(name=taskValues['taskName'],duration=taskValues['duration'])for taskValues in taskValuesJson["TaskValues"]]  
+        instances=FactBase(users+tasks)
+        ctrl.add_facts(instances)
+        ctrl.ground([("base", [])]) 
+        solution= None
+        print(ctrl)
+        def on_model(model):
+            nonlocal solution
+            solution=model.facts(unifier=[User,Task,Assignment], atoms=True,raise_on_empty=True)
+
+        ctrl.solve(on_model=on_model)
+        if not solution:
+            raise ValueError("No solution Found")
+
+        query = solution.query(Assignment).where(Assignment.user == ph1_).order_by(Assignment.time)
+        results={}    
+
+        for u in users:
+            userValSet=set()
+            
+            assignments = list(query.bind(u.name).all())
+            userID=u.userID
+
+            taskVals=[]
+            if not assignments:
+                print("User not assigned any tasks!".format(u.name))
+                
+            else:
+                print("User {} assigned to: ".format(u.name))
+                
+                for a in assignments:
+                    print("\t chore {}, at time {}".format(a.taskValue,a.time))
+                    taskVals.append({"TaskValue":a.taskValue, "time": a.time})
+        results[str(userId)] = taskVals
+        
         print("all Members present")
-
-
         
     else:
         print("Not all Members are present so timetable wont be made") 
@@ -107,12 +144,6 @@ def clormTimetable(cloud_event):
     # ctrl=clingo.Control(unifier =[User, Task,Assignment])
     # ctrl.load(ASP_PROGRAM)
     
-
-
-
-    # ctrl.add_facts(instances)
-    # ctrl.ground([("base", [])])
-
 
 
     # storageClient=storage.Client()
@@ -134,3 +165,9 @@ def clormTimetable(cloud_event):
     #     return numberHive
     
     # jsonData=json.loads(contentString)
+
+        # for blobs in storageClient.list_blobs(bucket,prefix=userVals['hiveID']):
+        #     # userVals[counter]={''}
+        #     blobVal=bucketVal.blob(blobs.name)
+        #     print(userDictData)
+        #     userDictVals.update({'name':userDictData['name'], 'userID':userDictData['userID']})
