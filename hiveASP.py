@@ -10,9 +10,9 @@ def userVals(cloud_event):
         bucket=storageClient.bucket(bucketName)
         blob= bucket.blob(name)
         blob.content_type="application/json"
-        jsonString=json.dumps(vals)
+        
         with blob.open(mode="w") as f:
-            f.write(jsonString)
+            f.write(vals)
         
     data = cloud_event.data
 
