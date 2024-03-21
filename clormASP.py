@@ -81,6 +81,7 @@ def clormTimetable(cloud_event):
     for blob in storageClient.list_blobs(bucket,prefix=userVals['hiveID']):      
         userData=blob.download_as_bytes().decode()
         userDictData=json.loads(userData)
+        print(userDictData)
         userDict=addToUserDict(userDictData['name'],userDictData['userID'])
         allMembersDict["userSpecifications"].append(userDict)
         print(allMembersDict)
@@ -119,6 +120,7 @@ def clormTimetable(cloud_event):
         results={}    
 
         for u in users:
+            print(u)
             userValSet=set()
             
             assignments = list(query.bind(u.name).all())
@@ -134,8 +136,13 @@ def clormTimetable(cloud_event):
                 for a in assignments:
                     print("\t chore {}, at time {}".format(a.taskValue,a.time))
                     taskVals.append({"TaskValue":a.taskValue, "time": a.time})
-        results[str(userId)] = taskVals
-        
+            results[str(userID)] = taskVals
+        bhiveStorage=storage.Client()
+        bhiveBucket= bhiveStorage.bucket("bhive-81306.appspot.com")
+        bhiveBlob= bhiveBucket.blob("results/"+userVals['hiveID'])
+        jsonResults= json.dumps(results,indent=4)
+    
+        bhiveBlob.upload_from_string(jsonResults)
         print("all Members present")
         
     else:
