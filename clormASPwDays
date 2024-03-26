@@ -1,15 +1,12 @@
 import functions_framework
 from clorm import monkey
+
 monkey.patch()
-
 import clingo
-from clorm import ConstantStr,FactBase, StringField, ContextBuilder, Predicate, ConstantField,ph1_
-
 from google.cloud import storage
 import os
 import json
-from datetime import date
-
+from clorm import ConstantStr,FactBase, StringField, ContextBuilder, Predicate, ConstantField,ph1_
 cb = ContextBuilder
 ASP_PROGRAM= "tasksUsers.lp"
 class DayVals(Predicate):
@@ -33,26 +30,21 @@ class Task(Predicate):
     name:ConstantStr
     duration:int
 
-class Date(Predicate):
-    currDate:str
-
 class Assignment(Predicate):
     taskValue:ConstantStr
     user:ConstantStr
     duration:int
+    #avaliable:DayVals
     time:int
-    #date: Date
-    avaliable:DayVals
-
+    days:int
 # Triggered by a change in a storage bucket
 @functions_framework.cloud_event
 def clormTimetable(cloud_event):
-    def addToUserDict(name, userID,days):
+    def addToUserDict(name, userID):
         
         updateDict={
             "userID":userID,
-            "name":name,
-            "availableDays":days
+            "name":name
         }
         return updateDict
     def readTasks():
@@ -84,7 +76,6 @@ def clormTimetable(cloud_event):
     #Access the file contents in a way that the program can break down 
     userData=blob.download_as_bytes().decode()
     userVals=json.loads(userData)   
-    #currDateVal= date.today()
     maxMembers=userVals['numMember']
     allMembersDict ={"userSpecifications":[]}
     #Create a somewhat async function that depends on all members being present READ THE USER DOCUMENTS
@@ -92,8 +83,7 @@ def clormTimetable(cloud_event):
         userData=blob.download_as_bytes().decode()
         userDictData=json.loads(userData)
         print(userDictData)
-        userDict=addToUserDict(userDictData['name'],userDictData['userID'],userDictData['availableDays'])
-        hiveID = userDictData['hiveID']
+        userDict=addToUserDict(userDictData['name'],userDictData['userID'])
         allMembersDict["userSpecifications"].append(userDict)
         print(allMembersDict)
         currentMembers+=1
@@ -114,13 +104,11 @@ def clormTimetable(cloud_event):
         ctrl.load(ASP_PROGRAM)
         users=[User(name=userValues['name'],userID=userValues['userID']) for userValues in allMembersDict['userSpecifications']]
         tasks=[Task(name=taskValues['taskName'],duration=taskValues['duration'])for taskValues in taskValuesJson["TaskValues"]]  
-       
         instances=FactBase(users+tasks)
         ctrl.add_facts(instances)
         ctrl.ground([("base", [])]) 
         solution= None
         print(ctrl)
-
         def on_model(model):
             nonlocal solution
             solution=model.facts(unifier=[User,Task,Assignment], atoms=True,raise_on_empty=True)
@@ -129,14 +117,16 @@ def clormTimetable(cloud_event):
         if not solution:
             raise ValueError("No solution Found")
 
-        query = solution.query(Assignment).where(Assignment.user == ph1_).order_by(Assignment.date)
+        query = solution.query(Assignment).where(Assignment.user == ph1_).order_by(Assignment.time)
         results={}    
 
         for u in users:
+            print(u)
+            userValSet=set()
             
             assignments = list(query.bind(u.name).all())
             userID=u.userID
-            print(u.availableDays)
+
             taskVals=[]
             if not assignments:
                 print("User not assigned any tasks!".format(u.name))
@@ -145,15 +135,15 @@ def clormTimetable(cloud_event):
                 print("User {} assigned to: ".format(u.name))
                 
                 for a in assignments:
-                    print("\t chore {}, at time {}".format(a.taskValue,a.time))
-                    taskVals.append({"TaskValue":a.taskValue, "time": a.time})
-        results[str(userID)] = taskVals
+                    print("\t chore {}, at time {}, on a date".format(a.taskValue,a.time,a.days))
+                    taskVals.append({"TaskValue":a.taskValue, "time": a.time, "date": a.days})
+            results[str(userID)] = taskVals
+        bhiveStorage=storage.Client()
+        bhiveBucket= bhiveStorage.bucket("bhive-81306.appspot.com")
+        bhiveBlob= bhiveBucket.blob("results/"+userVals['hiveID'])
+        jsonResults= json.dumps(results,indent=4)
     
-        bhiveStorage= storage.Client()
-        bhiveBucket=storageClient.bucket("bhive-81306.appspot.com")
-        bhiveBlob= bhiveBucket.blob(hiveID)
-        bhiveBlob.upload_from_string(results)
-
+        bhiveBlob.upload_from_string(jsonResults)
         print("all Members present")
         
     else:

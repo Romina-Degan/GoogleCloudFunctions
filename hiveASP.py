@@ -12,7 +12,11 @@ def userVals(cloud_event):
         blob.content_type="application/json"
         
         with blob.open(mode="w") as f:
+            
             f.write(vals)
+        
+
+
         
     data = cloud_event.data
 
@@ -32,9 +36,18 @@ def userVals(cloud_event):
     print(f"Metageneration: {metageneration}")
     print(f"Created: {timeCreated}")
     print(f"Updated: {updated}")
+
     storageClient=storage.Client()
     bucket = storageClient.get_bucket(bucket)
     blob=bucket.blob(name)
     blobBytes=blob.download_as_bytes()
     blobString= blobBytes.decode("utf-8")
-    writeToASP("asp_react",blobString,name)
+    blobByteJson = blob.download_as_bytes().decode()
+    userVals= json.loads(blobByteJson)
+    currHiveID = userVals['hiveID']
+    print(currHiveID)
+    print(name)
+    if name == currHiveID:
+        return
+    else:
+        writeToASP("asp_react",blobString,name)
