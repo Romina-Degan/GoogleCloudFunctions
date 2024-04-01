@@ -1,0 +1,231 @@
+import functions_framework
+from clorm import monkey
+
+monkey.patch()
+import clingo
+from google.cloud import storage
+import re
+import json
+from clorm import ConstantStr,FactBase, StringField, ContextBuilder, Predicate, ConstantField,ph1_
+cb = ContextBuilder
+ASP_PROGRAM= "tasksUsers.lp"
+class AvaliableDays(Predicate):
+    nameOfDay:str 
+
+# #ENUM FIELD IS NOT SOMETHING YOU WANT THEY CANNOT BE QUERIED?
+class User(Predicate):
+    name:ConstantStr
+    userID:int
+    minVal:int
+    maxVal:int 
+
+class PreferredDays(Predicate):
+    dateVal:int
+    userID:int
+    
+    #avaliable:DayVals
+    # ?minTime:int
+    # maxTime:int
+    
+class Task(Predicate):
+    name:ConstantStr
+    duration:int
+    repetitionVal:int
+
+class PreferredTask(Predicate):
+    name:ConstantStr
+    duration:int
+    repetitionVal: int
+    user:ConstantStr
+    taskID:int
+    minTime:int
+
+
+class Assignment(Predicate):
+    taskValue:ConstantStr
+    taskID:int
+    user:ConstantStr
+    userID:int
+    duration:int
+    time:int
+    repeitionValue:int
+    date:int
+# Triggered by a change in a storage bucket
+@functions_framework.cloud_event
+def clormTimetable(cloud_event):
+    def addToUserDict(name, userID,minTime,maxTime,preferDays,preferTasks):
+        
+        updateDict={
+            "userID":userID,
+            "name":name,
+            "minTime":minTime,
+            "maxTime":maxTime,
+            "preferDays":preferDays,
+            "preferTasks":preferTasks
+            
+        }
+        return updateDict
+    def readTasks():
+        storageClient= storage.Client()
+        bucketVal=storageClient.bucket("asp-react")
+        blob=bucketVal.blob("Task2.0.json")
+        taskData=blob.download_as_bytes().decode()
+        taskDictData=json.loads(taskData)
+        print(taskVals)
+        return taskVals
+    prefTask=[]
+    personalVal="Personal"
+    currentMembers=0
+    #Gain basic info on the file that was just added
+    data = cloud_event.data
+    event_id = cloud_event["id"]
+    event_type = cloud_event["type"]
+    bucket = data["bucket"]
+    name = data["name"]
+    metageneration = data["metageneration"]
+    timeCreated = data["timeCreated"]
+    updated = data["updated"]
+
+    
+
+
+    #Initalize the bucket again to access USER files in the storage 
+    storageClient=storage.Client()
+    bucketVal=storageClient.bucket(bucket)
+    blob=bucketVal.blob(name)
+    #Access the file contents in a way that the program can break down 
+    userData=blob.download_as_bytes().decode()
+    userVals=json.loads(userData)   
+    maxMembers=userVals['numMember']
+    allMembersDict ={"userSpecifications":[]}
+    userIdDict={"userID":[]}
+    #Create a somewhat async function that depends on all members being present READ THE USER DOCUMENTS
+    for blob in storageClient.list_blobs(bucket,prefix=userVals['hiveID']):      
+        userData=blob.download_as_bytes().decode()
+        userDictData=json.loads(userData)
+        numericUserID=re.sub(r'[^0-9]','',userDictData['userID'])
+        print(userDictData['userID'])
+        userIdDict["userID"].append(userDictData['userID'])
+        print (userDictData)
+        userDict=addToUserDict(userDictData['name'],numericUserID, userDictData['minTime'],userDictData['maxTime'],userDictData['preferDays'],userDictData['preferTasks'])
+        allMembersDict["userSpecifications"].append(userDict)
+        currentMembers+=1
+    
+    blobTask= bucketVal.blob("Task.json")
+    taskData=blobTask.download_as_bytes().decode()
+    taskValuesJson=json.loads(taskData)
+    # for tasks in taskVals['TaskValues']:
+    #     print(tasks['taskName'])
+
+    # print(allMembersDict)
+
+    # allTasksDict=readTasks()
+    # print(allTasksDict)
+    #If member is present call the ASP 
+    if maxMembers==currentMembers:
+        ctrl=clingo.Control(unifier=[User,Task,Assignment,PreferredTask,PreferredDays])
+        ctrl.load(ASP_PROGRAM)
+        users = [User(name=userValues['name'], userID=userValues['userID'], minVal=int(userValues['minTime']), maxVal=int(userValues['maxTime'])) for userValues in allMembersDict['userSpecifications']]
+        #tasks=[Task(name=taskValues['taskName'],duration=taskValues['duration'])for taskValues in taskValuesJson["TaskValues"]]  
+        instances=FactBase(users)
+        ctrl.add_facts(instances)
+        for members in users:
+            currTask=[]
+            currUser=(list(filter(lambda x:(x["userID"]==members.userID),allMembersDict['userSpecifications']))) 
+            currPref= currUser[0]['preferTasks']
+            currDay=currUser[0]['preferDays']
+            print(currPref)
+            print(currDay)
+            for days in currDay:
+                print("Reaches Day")
+                instances.add(FactBase(PreferredDays(dateVal=days,userID=members.userID)))
+                ctrl.add_facts(instances)            
+            currPref.append("Personal")
+            print(currPref)
+            for items in currPref:
+                print("Reaches items")
+                prefTask=[]            
+                for taskValues in  taskValuesJson["TaskValues"][0]["TaskDescriptions"]:
+                    print("Reaches second loop")
+                    if items in taskValues['label'] and taskValues not in prefTask:    
+                        #REMEMBER FOR THIS THE CLASS FOR TAS?K THE ID IS SET TO INT SINCE JSON FILE IS INT BUT REAL IS STR
+                        print("why not?")
+                        currTask=[PreferredTask(name=taskValues['taskName'],duration=int(taskValues['duration']), repetitionVal=int(taskValues["repetition"]),user=members.userID, taskID=int(taskValues['taskID']),minTime=int(taskValues["minTime"]))]
+                        print(currTask)
+                        instances.add(FactBase(currTask))
+                    
+                        ctrl.add_facts(instances)
+        print(instances)
+        ctrl.ground([("base", [])]) 
+        solution= None
+    
+        def on_model(model):
+            nonlocal solution
+            solution=model.facts(unifier=[User,Task,Assignment], atoms=True,raise_on_empty=True)
+
+        ctrl.solve(on_model=on_model)
+        if not solution:
+            raise ValueError("No solution Found")
+
+        query = solution.query(Assignment).where(Assignment.user == ph1_).order_by(Assignment.date)
+        results={}    
+    
+        for u in users: 
+            currentTaskDuration=Assignment.duration
+            assignments = list(query.bind(u.name ).all())
+            userID=u.userID
+            taskVals=[]
+            if not assignments:
+                print("User not assigned any tasks!".format(u.name))
+                
+            else:
+                print("User {} assigned to: ".format(u.name))
+                
+                for a in assignments:
+                    currentDuration=a.duration
+                    
+                    print("\t chore {}, at time {} at date{}".format(a.taskValue,a.time,a.date))
+                    taskVals.append({"TaskValue":a.taskValue, "time": a.time})
+
+            results[str(userID)] = taskVals
+            bhiveStorage=storage.Client()
+            bhiveBucket= bhiveStorage.bucket("bhive-81306.appspot.com")
+            bhiveBlob= bhiveBucket.blob("results/"+userVals['hiveID'])
+            jsonResults= json.dumps(results,indent=4)
+        
+            bhiveBlob.upload_from_string(jsonResults)
+        print("all Members present")
+        
+    else:
+        print("Not all Members are present so timetable wont be made") 
+    
+    # ctrl=clingo.Control(unifier =[User, Task,Assignment])
+    # ctrl.load(ASP_PROGRAM)
+    
+
+
+    # storageClient=storage.Client()
+    # print(userData[3])
+    # try:
+    #     userJson= json.loads(userData)
+    #     print(userJson)
+    # except e:
+    #     print("PLEASEEE WHYYYY "+e)
+
+        # def readBucket(fileName, bucketName):
+    #     storageClient=storage.Client()
+    #     bucketBlob=storageClient.bucket(bucketName)
+    #     blob=bucketBlob.blob(fileName)
+    #     userData=blob.download_as_bytes().decode("utf8")
+    #     userVals = json.loads(userData)
+    #     numberHive=userVals['numMember']
+    #     print(userVals)
+    #     return numberHive
+    
+    # jsonData=json.loads(contentString)
+
+        # for blobs in storageClient.list_blobs(bucket,prefix=userVals['hiveID']):
+        #     # userVals[counter]={''}
+        #     blobVal=bucketVal.blob(blobs.name)
+        #     print(userDictData)
+        #     userDictVals.update({'name':userDictData['name'], 'userID':userDictData['userID']})
