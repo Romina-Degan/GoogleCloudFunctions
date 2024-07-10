@@ -1,0 +1,12 @@
+time(T):-T=1..32.
+date(DA):-DA=1..7.
+
+1{assignment(C,TID,U,ID,D,T,DA) :user(U,ID,MI,MX),time(T),date(DA),T>=MI, T<=MX}1 :- 
+        preferredTask(C,D,PID,TID), PID=ID,
+        preferredDays(DY,DID),
+        DY= DA, ID=DID.
+
+:- assignment(C,_,_,ID1,D,T,DA) ,  assignment(C,_,_,ID2,D,T,DA), ID1!=ID2 .
+:- assignment(C1,_,_,ID,D1,T,DA), assignment(C2,_,_,ID,D2,T,DA), C1!=C2.
+:- assignment(C,_,_,ID1,D,T1,_), assignment(C,_,_,ID2,D,T2,_),preferredTask(C,D,_,_), ID1!=ID2, abs(T1-T2)< D.
+:- assignment(C1,_,_,ID,D1,T1,DA), assignment(C2,_,_,ID,D2,T2,DA), T1<T2, T1+D1> T2.
